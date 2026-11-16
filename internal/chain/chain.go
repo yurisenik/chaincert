@@ -166,6 +166,101 @@ func needsIssuer(err error) bool {
 	return errors.As(err, &unknown)
 }
 
+// sameCAIdentity identifies reissued/cross-signed versions of one CA, not merely
+// certificates with a matching name. It is only a filter; a complete verified
+// leaf-to-system-root path is still required before an extra is informational.
+func sameCAIdentity(a, b *x509.Certificate) bool {
+	return a.IsCA && b.IsCA && bytes.Equal(a.RawSubject, b.RawSubject) && bytes.Equal(a.RawSubjectPublicKeyInfo, b.RawSubjectPublicKeyInfo)
+}
+
+func pathContains(path []*x509.Certificate, cert *x509.Certificate) bool {
+	for _, c := range path {
+		if bytes.Equal(c.Raw, cert.Raw) {
+			return true
+		}
+	}
+	return false
+}
+
+// alternativePaths accepts extra members of another fully verified path for
+// this leaf, with a cross-signed version of a preferred CA and a distinct trust
+// anchor. Matching signatures or CA identity alone never establish system trust.
+func alternativePaths(cert *x509.Certificate, selected []*x509.Certificate, paths [][]*x509.Certificate) [][]*x509.Certificate {
+	if selfSigned(cert) || !cert.IsCA {
+		return nil
+	}
+	anchor := selected[len(selected)-1]
+	var alternatives [][]*x509.Certificate
+	for _, path := range paths {
+		if len(path) < 2 || !bytes.Equal(path[0].Raw, selected[0].Raw) || !pathContains(path[:len(path)-1], cert) {
+			continue
+		}
+		otherAnchor := path[len(path)-1]
+		if bytes.Equal(otherAnchor.Raw, anchor.Raw) || sameCAIdentity(otherAnchor, anchor) {
+			continue
+		}
+		crossSigned := false
+		for _, member := range path[1 : len(path)-1] {
+			for _, preferred := range selected[1:] {
+				if !bytes.Equal(member.Raw, preferred.Raw) && sameCAIdentity(member, preferred) {
+					crossSigned = true
+					break
+				}
+			}
+			if crossSigned {
+				break
+			}
+		}
+		if !crossSigned {
+			continue
+		}
+		alternatives = append(alternatives, path)
+	}
+	return alternatives
+}
+
+func pathPresent(path []*x509.Certificate, indices map[string]int) bool {
+	for _, cert := range path[:len(path)-1] {
+		if _, ok := indices[digest(cert)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func pathInPresentedOrder(path []*x509.Certificate, indices map[string]int) bool {
+	last := -1
+	for _, cert := range path {
+		if index, ok := indices[digest(cert)]; ok {
+			if index < last {
+				return false
+			}
+			last = index
+		}
+	}
+	return true
+}
+
+func caLabel(cert *x509.Certificate) string {
+	name := strings.TrimSpace(cert.Subject.CommonName)
+	ous := strings.Join(cert.Subject.OrganizationalUnit, ", ")
+	if name == "" {
+		if ous != "" {
+			return ous
+		}
+		return cert.Subject.String()
+	}
+	// Some roots use a generic CN, e.g. GlobalSign; their OU contains the
+	// identifying generation, e.g. GlobalSign Root CA - R3.
+	if strings.HasPrefix(strings.ToLower(ous), strings.ToLower(name)+" ") {
+		return ous
+	}
+	if ous != "" && !strings.Contains(strings.ToLower(name), strings.ToLower(ous)) {
+		name += " (" + ous + ")"
+	}
+	return name
+}
+
 func (c *checker) check(ctx context.Context, original []*x509.Certificate, host string, includeRoot bool) Result {
 	r := Result{Status: "ok", Presented: []Certificate{}, Chain: []Certificate{}, Issues: []Issue{}, Host: host}
 	add := func(code, severity, message string) {
@@ -177,7 +272,7 @@ func (c *checker) check(ctx context.Context, original []*x509.Certificate, host 
 		r.Issues = append(r.Issues, Issue{code, severity, message})
 		if severity == "error" {
 			r.Status = "error"
-		} else if r.Status == "ok" {
+		} else if severity == "warning" && r.Status == "ok" {
 			r.Status = "warning"
 		}
 	}
@@ -340,13 +435,50 @@ func (c *checker) check(ctx context.Context, original []*x509.Certificate, host 
 				lastIndex = index
 			}
 		}
+		var alternateMessages []string
+		explained := make(map[string]bool)
 		for _, cert := range original {
 			if selfSigned(cert) {
 				add("unnecessary_root", "warning", "Исходная цепочка содержит корневой сертификат; обычно серверу не нужно его отправлять.")
 			}
 			if !used[digest(cert)] {
-				add("extra_certificates", "warning", "В исходной цепочке есть сертификаты вне выбранного доверенного пути.")
+				if alternatives := alternativePaths(cert, selected, paths); len(alternatives) > 0 {
+					path := alternatives[0]
+					for _, p := range alternatives {
+						if pathPresent(p, inOriginal) && pathInPresentedOrder(p, inOriginal) {
+							path = p
+							break
+						}
+					}
+					// Also check the compatibility path's wire order: selected-only
+					// checks miss leaf,cross-certificate,issuing-CA permutations.
+					ordered := pathInPresentedOrder(path, inOriginal)
+					if !ordered {
+						add("incorrect_order", "warning", "Сертификаты в исходной цепочке расположены в неверном порядке.")
+					}
+					if !pathPresent(path, inOriginal) {
+						r.Complete = false
+						add("missing_intermediate", "warning", "В исходной цепочке отсутствует промежуточный сертификат; он загружен по AIA.")
+					}
+					if !explained[digest(cert)] {
+						message := fmt.Sprintf("Дополнительный сертификат «%s» позволяет клиентам, которые доверяют корню «%s», проверить эту же цепочку.", caLabel(cert), caLabel(path[len(path)-1]))
+						if !ordered || !pathPresent(path, inOriginal) {
+							message = fmt.Sprintf("Для дополнительного сертификата «%s» проверен альтернативный путь к корню «%s». Замечания к составу и порядку цепочки указаны отдельно.", caLabel(cert), caLabel(path[len(path)-1]))
+						}
+						alternateMessages = append(alternateMessages, message)
+						explained[digest(cert)] = true
+					}
+				} else {
+					add("extra_certificates", "warning", "В исходной цепочке есть сертификаты вне выбранного доверенного пути.")
+				}
 			}
+		}
+		if len(alternateMessages) > 0 {
+			message := strings.Join(alternateMessages, " ")
+			if r.Status != "error" {
+				message += " Скачиваемый PEM содержит только выбранный путь доверия. Старым клиентам может требоваться альтернативный путь."
+			}
+			add("alternate_trust_path", "info", message)
 		}
 	} else {
 		var unknown x509.UnknownAuthorityError

@@ -21,6 +21,7 @@ import (
 type fixture struct {
 	root, intermediate, leaf *x509.Certificate
 	key                      *ecdsa.PrivateKey
+	rootKey                  *ecdsa.PrivateKey
 	roots                    *x509.CertPool
 	now                      time.Time
 }
@@ -57,7 +58,7 @@ func makeFixture(t *testing.T) fixture {
 	leaf := issue(t, l, intermediate, &lk.PublicKey, ik)
 	roots := x509.NewCertPool()
 	roots.AddCert(root)
-	return fixture{root, intermediate, leaf, ik, roots, now}
+	return fixture{root: root, intermediate: intermediate, leaf: leaf, key: ik, rootKey: rk, roots: roots, now: now}
 }
 func hasIssue(r Result, code string) bool {
 	for _, i := range r.Issues {

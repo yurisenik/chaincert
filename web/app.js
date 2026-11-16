@@ -254,8 +254,21 @@
         $("issues").hidden = false;
         data.issues.forEach((issue) => {
           const li = document.createElement("li");
-          li.textContent =
-            issue.message || issue.code || "Проверьте цепочку сертификатов.";
+          const severity = ["info", "warning", "error"].includes(issue.severity)
+            ? issue.severity
+            : "warning";
+          li.className = `issue issue-${severity}`;
+          const label = document.createElement("strong");
+          label.className = "issue-label";
+          label.textContent = {
+            info: "Информация",
+            warning: "Предупреждение",
+            error: "Ошибка",
+          }[severity];
+          const message = document.createElement("span");
+          message.textContent =
+            issue.message || issue.code || "Сообщение о цепочке сертификатов.";
+          li.append(label, message);
           $("issues").append(li);
         });
       }
