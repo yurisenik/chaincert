@@ -5,6 +5,8 @@
   let mode = "host";
   let currentPEM = "";
   let currentHostLink = "";
+  let requestVersion = 0;
+  let activeController = null;
   const privateKey = /-----BEGIN[\w\s-]*PRIVATE KEY-----/i;
   function normalizeHost(value) {
     const input = value.trim();
@@ -36,7 +38,9 @@
     return `${ascii}${port ? `:${port}` : ""}`;
   }
   function selectMode(index) {
-    mode = index === 0 ? "host" : "pem";
+    const nextMode = index === 0 ? "host" : "pem";
+    if (nextMode !== mode) resetOutput();
+    mode = nextMode;
     tabs.forEach((tab, i) => {
       tab.classList.toggle("active", i === index);
       tab.setAttribute("aria-selected", String(i === index));
@@ -92,6 +96,12 @@
     });
   }
   function resetOutput() {
+    requestVersion++;
+    activeController?.abort();
+    activeController = null;
+    $("submit").disabled = false;
+    $("submit-label").textContent = "Проверить цепочку";
+    $("check-form").removeAttribute("aria-busy");
     $("result").hidden = true;
     $("result").removeAttribute("data-status");
     $("result-symbol").hidden = true;
@@ -113,6 +123,60 @@
     $("issues").replaceChildren();
     $("pem-output").textContent = "";
     $("copy-pem").textContent = "Скопировать";
+    $("chain-choice").hidden = true;
+    $("chain-options").replaceChildren();
+    $("chain-label").textContent = "Собранная цепочка";
+  }
+  function selectPEM(pem) {
+    currentPEM = pem;
+    $("pem-output").textContent = pem;
+    $("copy-pem").textContent = "Скопировать";
+  }
+  function renderPEMChoices(data) {
+    selectPEM(data.pem);
+    $("pem-section").hidden = false;
+    const alternatives = [];
+    const seen = new Set([data.pem]);
+    for (const item of Array.isArray(data.compatibilityChains)
+      ? data.compatibilityChains
+      : []) {
+      if (
+        data.status === "error" ||
+        typeof item.pem !== "string" ||
+        !item.pem.trim() ||
+        privateKey.test(item.pem) ||
+        seen.has(item.pem)
+      )
+        continue;
+      seen.add(item.pem);
+      alternatives.push(item);
+    }
+    if (!alternatives.length) return;
+    $("chain-choice").hidden = false;
+    $("chain-label").textContent = "Короткая цепочка";
+    const bundles = [
+      { label: "Короткая цепочка", pem: data.pem },
+      ...alternatives.map((item) => ({
+        label: `Для совместимости — ${typeof item.root === "string" && item.root.trim() ? item.root : "другой доверенный корень"}`,
+        pem: item.pem,
+      })),
+    ];
+    bundles.forEach((bundle, index) => {
+      const label = document.createElement("label");
+      label.className = "chain-option";
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.name = "pem-chain";
+      radio.value = String(index);
+      radio.checked = index === 0;
+      radio.addEventListener("change", () => {
+        if (radio.checked) selectPEM(bundle.pem);
+      });
+      const text = document.createElement("span");
+      text.textContent = bundle.label;
+      label.append(radio, text);
+      $("chain-options").append(label);
+    });
   }
   function renderChain(items, target, section, count) {
     if (!Array.isArray(items) || !items.length) return;
@@ -144,6 +208,7 @@
   $("check-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     resetOutput();
+    const version = requestVersion;
     // Check both fields before any request, including an inactive field.
     if (
       privateKey.test($("cert-pem").value) ||
@@ -185,6 +250,7 @@
     $("submit-label").textContent = "Проверяем цепочку…";
     $("check-form").setAttribute("aria-busy", "true");
     const controller = new AbortController();
+    activeController = controller;
     const timeout = setTimeout(() => controller.abort(), 60000);
     try {
       const response = await fetch("/api/check", {
@@ -208,6 +274,7 @@
           "Сервер вернул неожиданный ответ. Повторите проверку позже.",
         );
       }
+      if (version !== requestVersion) return;
       if (!response.ok)
         throw new Error(
           data.message ||
@@ -277,11 +344,10 @@
         data.pem.trim() &&
         !privateKey.test(data.pem)
       ) {
-        currentPEM = data.pem;
-        $("pem-section").hidden = false;
-        $("pem-output").textContent = data.pem;
+        renderPEMChoices(data);
       }
     } catch (error) {
+      if (version !== requestVersion) return;
       showResult(
         "error",
         error.name === "AbortError"
@@ -293,17 +359,22 @@
       );
     } finally {
       clearTimeout(timeout);
-      $("submit").disabled = false;
-      $("submit-label").textContent = "Проверить цепочку";
-      $("check-form").removeAttribute("aria-busy");
+      if (version === requestVersion) {
+        activeController = null;
+        $("submit").disabled = false;
+        $("submit-label").textContent = "Проверить цепочку";
+        $("check-form").removeAttribute("aria-busy");
+      }
     }
   });
   $("copy-pem").addEventListener("click", async () => {
-    if (!currentPEM) return;
+    const pem = currentPEM;
+    if (!pem) return;
     try {
-      await navigator.clipboard.writeText(currentPEM);
-      $("copy-pem").textContent = "Скопировано ✓";
+      await navigator.clipboard.writeText(pem);
+      if (currentPEM === pem) $("copy-pem").textContent = "Скопировано ✓";
     } catch {
+      if (currentPEM !== pem) return;
       const selection = window.getSelection();
       const range = document.createRange();
       range.selectNodeContents($("pem-output"));

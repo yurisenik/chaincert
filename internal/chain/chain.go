@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -30,16 +31,22 @@ type Issue struct {
 	Message  string `json:"message"`
 }
 
+type CompatibilityChain struct {
+	Root string `json:"root"`
+	PEM  string `json:"pem"`
+}
+
 type Result struct {
-	Status    string        `json:"status"`
-	Message   string        `json:"message"`
-	Presented []Certificate `json:"presented"`
-	Chain     []Certificate `json:"chain"`
-	PEM       string        `json:"pem"`
-	Issues    []Issue       `json:"issues"`
-	Verified  bool          `json:"verified"`
-	Complete  bool          `json:"complete"`
-	Host      string        `json:"host,omitempty"`
+	Status              string               `json:"status"`
+	Message             string               `json:"message"`
+	Presented           []Certificate        `json:"presented"`
+	Chain               []Certificate        `json:"chain"`
+	PEM                 string               `json:"pem"`
+	CompatibilityChains []CompatibilityChain `json:"compatibilityChains"`
+	Issues              []Issue              `json:"issues"`
+	Verified            bool                 `json:"verified"`
+	Complete            bool                 `json:"complete"`
+	Host                string               `json:"host,omitempty"`
 }
 
 type checker struct {
@@ -261,8 +268,38 @@ func caLabel(cert *x509.Certificate) string {
 	return name
 }
 
+func encodePath(path []*x509.Certificate, includeRoot bool) string {
+	if !includeRoot && len(path) > 1 {
+		path = path[:len(path)-1]
+	}
+	var out strings.Builder
+	for _, cert := range path {
+		_ = pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+	}
+	return out.String()
+}
+
+func pathKey(path []*x509.Certificate) string {
+	var key strings.Builder
+	for _, cert := range path {
+		key.WriteString(digest(cert))
+	}
+	return key.String()
+}
+
+// Keep one deterministic, shortest verified path per alternate trust anchor.
+// This only receives paths already returned by Verify, never raw input order.
+func retainCompatibilityPath(paths map[string][]*x509.Certificate, path []*x509.Certificate) {
+	id := digest(path[len(path)-1])
+	previous := paths[id]
+	if previous == nil || len(path) < len(previous) || (len(path) == len(previous) && pathKey(path) < pathKey(previous)) {
+		paths[id] = path
+	}
+}
+
 func (c *checker) check(ctx context.Context, original []*x509.Certificate, host string, includeRoot bool) Result {
-	r := Result{Status: "ok", Presented: []Certificate{}, Chain: []Certificate{}, Issues: []Issue{}, Host: host}
+	r := Result{Status: "ok", Presented: []Certificate{}, Chain: []Certificate{}, CompatibilityChains: []CompatibilityChain{}, Issues: []Issue{}, Host: host}
+	compatibilityPaths := make(map[string][]*x509.Certificate)
 	add := func(code, severity, message string) {
 		for _, i := range r.Issues {
 			if i.Code == code {
@@ -443,6 +480,9 @@ func (c *checker) check(ctx context.Context, original []*x509.Certificate, host 
 			}
 			if !used[digest(cert)] {
 				if alternatives := alternativePaths(cert, selected, paths); len(alternatives) > 0 {
+					for _, path := range alternatives {
+						retainCompatibilityPath(compatibilityPaths, path)
+					}
 					path := alternatives[0]
 					for _, p := range alternatives {
 						if pathPresent(p, inOriginal) && pathInPresentedOrder(p, inOriginal) {
@@ -476,7 +516,7 @@ func (c *checker) check(ctx context.Context, original []*x509.Certificate, host 
 		if len(alternateMessages) > 0 {
 			message := strings.Join(alternateMessages, " ")
 			if r.Status != "error" {
-				message += " Скачиваемый PEM содержит только выбранный путь доверия. Старым клиентам может требоваться альтернативный путь."
+				message += " По умолчанию выбран короткий путь доверия. Для старых клиентов можно выбрать и скачать вариант для совместимости."
 			}
 			add("alternate_trust_path", "info", message)
 		}
@@ -516,15 +556,23 @@ func (c *checker) check(ctx context.Context, original []*x509.Certificate, host 
 	}
 	r.Verified = verifyErr == nil && r.Status != "error"
 	if r.Verified {
-		out := selected
-		if !includeRoot && len(out) > 1 {
-			out = out[:len(out)-1]
+		r.PEM = encodePath(selected, includeRoot)
+		var anchors []string
+		for anchor := range compatibilityPaths {
+			anchors = append(anchors, anchor)
 		}
-		var b strings.Builder
-		for _, cert := range out {
-			_ = pem.Encode(&b, &pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw})
+		sort.Slice(anchors, func(i, j int) bool {
+			a, b := compatibilityPaths[anchors[i]], compatibilityPaths[anchors[j]]
+			nameA, nameB := caLabel(a[len(a)-1]), caLabel(b[len(b)-1])
+			if nameA != nameB {
+				return nameA < nameB
+			}
+			return anchors[i] < anchors[j]
+		})
+		for _, anchor := range anchors {
+			path := compatibilityPaths[anchor]
+			r.CompatibilityChains = append(r.CompatibilityChains, CompatibilityChain{Root: caLabel(path[len(path)-1]), PEM: encodePath(path, includeRoot)})
 		}
-		r.PEM = b.String()
 	}
 	switch r.Status {
 	case "ok":

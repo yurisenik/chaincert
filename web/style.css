@@ -664,7 +664,8 @@ pre {
 .check-card > h2 {
   margin-top: 0;
 }
-h3 > #presented-label {
+h3 > #presented-label,
+h3 > #chain-label {
   font-family: inherit;
   color: inherit;
   font-size: inherit;
@@ -688,4 +689,39 @@ h3 > #presented-label {
 #share-url {
   font-family: var(--mono);
   font-size: 12px;
+}
+
+.chain-choice {
+  min-width: 0;
+  margin: 24px 0 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.chain-choice legend {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+label.chain-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0;
+  padding: 8px 0;
+  font-size: 13px;
+  font-weight: 400;
+  cursor: pointer;
+}
+.chain-option input {
+  flex-shrink: 0;
+  margin: 5px 0 0;
+  accent-color: var(--green);
+}
+.chain-option span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chain-choice .field-help {
+  margin: 8px 0 0;
 }

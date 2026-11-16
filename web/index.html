@@ -245,10 +245,26 @@
           <ol id="presented-chain" class="certificate-list"></ol>
         </div>
         <div id="chain-section" hidden>
-          <h3>Собранная цепочка <span id="chain-count"></span></h3>
+          <h3>
+            <span id="chain-label">Собранная цепочка</span>
+            <span id="chain-count"></span>
+          </h3>
           <ol id="reconstructed-chain" class="certificate-list"></ol>
         </div>
         <div id="pem-section" class="pem-section" hidden>
+          <fieldset
+            id="chain-choice"
+            class="chain-choice"
+            aria-describedby="chain-choice-help"
+            hidden
+          >
+            <legend>Вариант цепочки</legend>
+            <div id="chain-options"></div>
+            <p id="chain-choice-help" class="field-help">
+              Выбранный вариант отображается ниже и используется при копировании
+              и скачивании.
+            </p>
+          </fieldset>
           <div class="pem-heading">
             <h3>Готовый PEM</h3>
             <div class="output-actions">

@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"crypto/ecdsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -13,6 +14,7 @@ import (
 type crossFixture struct {
 	fixture
 	alternateRoot, cross *x509.Certificate
+	alternateKey         *ecdsa.PrivateKey
 }
 
 func makeCrossFixture(t *testing.T, alterRoot, alterCross func(*x509.Certificate)) crossFixture {
@@ -32,7 +34,7 @@ func makeCrossFixture(t *testing.T, alterRoot, alterCross func(*x509.Certificate
 	}
 	cross := issue(t, &crossTemplate, root, f.root.PublicKey, k)
 	f.roots.AddCert(root)
-	return crossFixture{f, root, cross}
+	return crossFixture{f, root, cross, k}
 }
 
 func issueByCode(t *testing.T, r Result, code string) Issue {
@@ -56,7 +58,7 @@ func TestCrossSignedAlternateAnchorInformational(t *testing.T) {
 			t.Fatalf("%+v", r)
 		}
 		info := issueByCode(t, r, "alternate_trust_path")
-		if info.Severity != "info" || !strings.Contains(info.Message, "Example Trust Root CA - R3") || !strings.Contains(info.Message, "Скачиваемый PEM") {
+		if info.Severity != "info" || !strings.Contains(info.Message, "Example Trust Root CA - R3") || !strings.Contains(info.Message, "вариант для совместимости") {
 			t.Fatalf("%+v", info)
 		}
 		baseline := c.check(context.Background(), input[:2], "example.com", includeRoot)
@@ -116,7 +118,7 @@ func TestCrossSignedExtrasDoNotHideWarningsAndErrors(t *testing.T) {
 			if tt.status == "error" && (r.Verified || r.PEM != "") {
 				t.Fatal("error produced verified PEM")
 			}
-			if tt.status == "error" && strings.Contains(issueByCode(t, r, "alternate_trust_path").Message, "Скачиваемый PEM") {
+			if tt.status == "error" && strings.Contains(issueByCode(t, r, "alternate_trust_path").Message, "скачать") {
 				t.Fatal("error advertises a downloadable PEM")
 			}
 			if tt.name == "duplicate" && strings.Count(issueByCode(t, r, "alternate_trust_path").Message, "Дополнительный сертификат") != 1 {
@@ -159,6 +161,9 @@ func TestInvalidCrossSignedCertificatesRemainExtra(t *testing.T) {
 			if r.Status != "warning" || !r.Verified || !hasIssue(r, "extra_certificates") || hasIssue(r, "alternate_trust_path") {
 				t.Fatalf("%+v", r)
 			}
+			if len(r.CompatibilityChains) > 0 {
+				t.Fatal("invalid compatibility material exported")
+			}
 		})
 	}
 }
@@ -186,6 +191,9 @@ func TestAlternateSameAnchorRemainsExtra(t *testing.T) {
 	if r.Status != "warning" || !hasIssue(r, "extra_certificates") || hasIssue(r, "alternate_trust_path") {
 		t.Fatalf("%+v", r)
 	}
+	if len(r.CompatibilityChains) > 0 {
+		t.Fatal("same-anchor path exported as alternate")
+	}
 }
 
 func TestCrossSignedWithMissingIntermediateStaysWarning(t *testing.T) {
@@ -198,6 +206,10 @@ func TestCrossSignedWithMissingIntermediateStaysWarning(t *testing.T) {
 	if strings.Contains(issueByCode(t, r, "alternate_trust_path").Message, "позволяет клиентам") {
 		t.Fatal("incomplete supplied path claimed complete")
 	}
+	if len(r.CompatibilityChains) != 1 {
+		t.Fatal("missing rebuilt compatibility export")
+	}
+	assertExportedPath(t, r.CompatibilityChains[0].PEM, []*x509.Certificate{f.leaf, f.intermediate, f.cross}, f.alternateRoot, c)
 }
 
 func TestAlternatePathWithAdditionalIntermediate(t *testing.T) {
@@ -231,4 +243,8 @@ func TestAlternatePathWithAdditionalIntermediate(t *testing.T) {
 	if !strings.Contains(info.Message, "Alternate Bridge CA") || !strings.Contains(info.Message, "Alternate Root") {
 		t.Fatalf("%+v", info)
 	}
+	if len(r.CompatibilityChains) != 1 {
+		t.Fatal("missing multi-extra compatibility export")
+	}
+	assertExportedPath(t, r.CompatibilityChains[0].PEM, []*x509.Certificate{f.leaf, f.intermediate, cross, bridge}, root, c)
 }
