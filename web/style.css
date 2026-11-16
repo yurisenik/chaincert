@@ -384,6 +384,13 @@ code {
   line-height: 1.2;
   overflow-wrap: anywhere;
 }
+/* The result heading receives focus after each check. Highlight the whole summary. */
+.result-heading h2:focus {
+  outline: none;
+}
+.result-card[data-status] .result-heading:focus-within {
+  border-color: currentColor;
+}
 .result-card[data-status="ok"] .result-heading {
   background: #eff6e9;
   border-color: #cbdcbe;
