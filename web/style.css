@@ -615,3 +615,18 @@ h3 > #presented-label {
 .privacy-note svg {
   flex-shrink: 0;
 }
+
+.share-result {
+  margin: 14px 0;
+}
+.share-result .field-help {
+  display: inline-block;
+  margin: 0 0 0 10px;
+}
+#share-fallback {
+  margin-top: 12px;
+}
+#share-url {
+  font-family: var(--mono);
+  font-size: 12px;
+}

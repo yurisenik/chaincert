@@ -4,6 +4,7 @@
   const tabs = [$("host-tab"), $("pem-tab")];
   let mode = "host";
   let currentPEM = "";
+  let currentHostLink = "";
   const privateKey = /-----BEGIN[\w\s-]*PRIVATE KEY-----/i;
   function normalizeHost(value) {
     const input = value.trim();
@@ -88,6 +89,11 @@
   }
   function resetOutput() {
     currentPEM = "";
+    currentHostLink = "";
+    $("share-result").hidden = true;
+    $("share-fallback").hidden = true;
+    $("share-url").value = "";
+    $("share-status").textContent = "";
     for (const id of [
       "presented-section",
       "chain-section",
@@ -209,6 +215,12 @@
           "Сервер вернул неожиданный результат. Повторите проверку позже.",
         );
       showResult(data.status, data.message);
+      if (submittedMode === "host") {
+        const link = new URL("/", window.location.origin);
+        link.searchParams.set("host", host);
+        currentHostLink = link.href;
+        $("share-result").hidden = false;
+      }
       $("presented-label").textContent =
         submittedMode === "host" ? "Сервер передал" : "Переданные сертификаты";
       renderChain(
@@ -285,4 +297,45 @@
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
+  $("copy-link").addEventListener("click", async () => {
+    const link = currentHostLink;
+    if (!link) return;
+    try {
+      await navigator.clipboard.writeText(link);
+      if (currentHostLink === link) {
+        $("share-status").textContent = "Ссылка скопирована.";
+      }
+    } catch {
+      if (currentHostLink !== link) return;
+      $("share-fallback").hidden = false;
+      $("share-url").value = link;
+      $("share-url").focus();
+      $("share-url").select();
+      $("share-status").textContent =
+        "Скопируйте выделенную ссылку: Ctrl+C или Cmd+C.";
+    }
+  });
+
+  // Deep links contain only a hostname. PEM and key material are never read from URLs.
+  const params = new URLSearchParams(window.location.search);
+  const hosts = params.getAll("host");
+  if (hosts.length) {
+    if (hosts.length !== 1) {
+      showResult(
+        "error",
+        "В ссылке должен быть один параметр host с адресом сервера. Проверка не запущена.",
+      );
+    } else {
+      try {
+        normalizeHost(hosts[0]);
+        $("host").value = hosts[0];
+        $("check-form").requestSubmit();
+      } catch {
+        showResult(
+          "error",
+          "В ссылке указан некорректный адрес сервера. Используйте имя хоста и, при необходимости, порт от 1 до 65535. Проверка не запущена.",
+        );
+      }
+    }
+  }
 })();

@@ -171,6 +171,21 @@
           <span id="result-badge" class="badge"></span>
         </div>
         <p id="result-message" role="status" aria-live="polite"></p>
+        <div id="share-result" class="share-result" hidden>
+          <button id="copy-link" class="secondary-button" type="button">
+            Скопировать ссылку
+          </button>
+          <span
+            id="share-status"
+            class="field-help"
+            role="status"
+            aria-live="polite"
+          ></span>
+          <div id="share-fallback" hidden>
+            <label for="share-url">Ссылка для повторной проверки адреса</label>
+            <input id="share-url" type="text" readonly />
+          </div>
+        </div>
         <ul id="issues" class="issues" hidden></ul>
         <div id="presented-section" hidden>
           <h3>
