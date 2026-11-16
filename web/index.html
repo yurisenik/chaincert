@@ -166,11 +166,61 @@
         aria-labelledby="result-title"
         hidden
       >
-        <div class="result-heading">
-          <div><h2 id="result-title" tabindex="-1">Результат проверки</h2></div>
-          <span id="result-badge" class="badge"></span>
+        <div
+          class="result-heading"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div
+            id="result-symbol"
+            class="result-symbol"
+            aria-hidden="true"
+            hidden
+          >
+            <svg id="symbol-ok" viewBox="0 0 80 80" hidden>
+              <circle cx="40" cy="40" r="36" fill="currentColor" />
+              <path
+                d="m23 41 11 11 23-25"
+                fill="none"
+                stroke="#fff"
+                stroke-width="6"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              />
+            </svg>
+            <svg id="symbol-warning" viewBox="0 0 80 80" hidden>
+              <path
+                d="M34 10a7 7 0 0 1 12 0l31 53a7 7 0 0 1-6 11H9a7 7 0 0 1-6-11Z"
+                fill="currentColor"
+              />
+              <path
+                d="M40 28v20"
+                stroke="#54380c"
+                stroke-width="6"
+                stroke-linecap="round"
+              />
+              <circle cx="40" cy="60" r="3.5" fill="#54380c" />
+            </svg>
+            <svg id="symbol-error" viewBox="0 0 80 80" hidden>
+              <path
+                d="M25 4h30l21 21v30L55 76H25L4 55V25Z"
+                fill="currentColor"
+              />
+              <path
+                d="m28 28 24 24m0-24L28 52"
+                fill="none"
+                stroke="#fff"
+                stroke-width="6"
+                stroke-linecap="round"
+              />
+            </svg>
+          </div>
+          <div class="result-summary">
+            <h2 id="result-title" tabindex="-1">Результат проверки</h2>
+          </div>
         </div>
-        <p id="result-message" role="status" aria-live="polite"></p>
+        <p id="result-message"></p>
         <div id="share-result" class="share-result" hidden>
           <button id="copy-link" class="secondary-button" type="button">
             Скопировать ссылку

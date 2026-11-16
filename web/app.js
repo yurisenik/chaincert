@@ -61,21 +61,25 @@
       tabs[next].focus();
     });
   });
-  function showResult(status, message) {
+  function showResult(status, message, errorKind = "input") {
     const known = ["ok", "warning", "error"].includes(status)
       ? status
       : "error";
     $("result").hidden = false;
-    $("result-badge").className = `badge ${known}`;
-    $("result-badge").textContent = {
-      ok: "Проверено",
-      warning: "Есть замечания",
-      error: "Ошибка",
-    }[known];
+    $("result").dataset.status = known;
+    $("result-symbol").hidden = false;
+    for (const state of ["ok", "warning", "error"]) {
+      $("symbol-" + state).toggleAttribute("hidden", state !== known);
+    }
     $("result-title").textContent = {
-      ok: "Цепочка готова",
-      warning: "Проверьте замечания",
-      error: "Не удалось завершить проверку",
+      ok: "Цепочка действительна",
+      warning: "В цепочке есть замечания",
+      error:
+        errorKind === "certificate"
+          ? "Цепочка не прошла проверку"
+          : errorKind === "request"
+            ? "Не удалось выполнить проверку"
+            : "Проверьте введённые данные",
     }[known];
     $("result-message").textContent =
       message || "Сервер не вернул описание результата.";
@@ -84,10 +88,13 @@
       behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
         ? "instant"
         : "smooth",
-      block: "nearest",
+      block: "start",
     });
   }
   function resetOutput() {
+    $("result").hidden = true;
+    $("result").removeAttribute("data-status");
+    $("result-symbol").hidden = true;
     currentPEM = "";
     currentHostLink = "";
     $("share-result").hidden = true;
@@ -214,7 +221,15 @@
         throw new Error(
           "Сервер вернул неожиданный результат. Повторите проверку позже.",
         );
-      showResult(data.status, data.message);
+      const certificateResult =
+        Array.isArray(data.presented) &&
+        data.presented.length > 0 &&
+        !data.issues?.some((issue) => issue.code === "canceled");
+      showResult(
+        data.status,
+        data.message,
+        certificateResult ? "certificate" : "request",
+      );
       if (submittedMode === "host") {
         const link = new URL("/", window.location.origin);
         link.searchParams.set("host", host);
@@ -261,6 +276,7 @@
           : error instanceof TypeError
             ? "Не удалось связаться с сервером. Проверьте соединение и повторите попытку."
             : error.message,
+        "request",
       );
     } finally {
       clearTimeout(timeout);
