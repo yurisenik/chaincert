@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
 	"errors"
+	"html/template"
 	"io"
 	"io/fs"
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -102,6 +105,21 @@ func handler(check checker, capacity int) http.Handler {
 	if err != nil {
 		panic(err)
 	}
+	index := template.Must(template.ParseFS(static, "index.html"))
+	probeLabel := strings.TrimSpace(os.Getenv("CHAINCERT_PROBE_LABEL"))
+	if probeLabel == "" {
+		probeLabel = "Проверка выполняется с сервера Chaincert."
+	}
+	var page bytes.Buffer
+	if err := index.Execute(&page, struct{ ProbeLabel string }{probeLabel}); err != nil {
+		panic(err)
+	}
+	serveIndex := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write(page.Bytes())
+	}
+	mux.HandleFunc("GET /{$}", serveIndex)
+	mux.HandleFunc("GET /index.html", serveIndex)
 	mux.Handle("GET /", http.FileServer(http.FS(static)))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
